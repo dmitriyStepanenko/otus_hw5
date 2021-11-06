@@ -5,7 +5,7 @@ import selectors
 import types
 from optparse import OptionParser
 from response import Response
-from threadpool import ThreadPool
+from concurrent.futures import ThreadPoolExecutor
 from constants import DEFAULT_HTTP_PROTOCOL
 from constants import OLD_HTTP_PROTOCOL
 
@@ -37,7 +37,7 @@ class Server:
         self.allowed_http_protocols = [DEFAULT_HTTP_PROTOCOL, OLD_HTTP_PROTOCOL]
         self.allowed_methods = ['GET', 'HEAD']
         self.count_workers = workers
-        self.thread_pool = ThreadPool(workers)
+        self.thread_pool = ThreadPoolExecutor(workers)
 
     def run_server(self, host=None, port=None):
         host = self.host if host is None else host
@@ -96,7 +96,7 @@ class Server:
                 allowed_http_protocols=self.allowed_http_protocols,
                 root_dir=self.root_dir
             )
-            self.thread_pool.add_task(resp.form_response_no_return, socket_with_data.data)
+            self.thread_pool.submit(resp.form_response_no_return, socket_with_data.data)
 
         if mask & selectors.EVENT_WRITE:
             if data.resp:
@@ -123,6 +123,7 @@ class Server:
             sock.close()
 
     def close(self):
+        self.thread_pool.shutdown()
         self.sel.close()
 
 
@@ -130,7 +131,7 @@ def main():
     op = OptionParser()
     op.add_option("-p", "--port", type=int, default=8080)
     op.add_option("-l", "--log", default=None)
-    op.add_option("-w", "--workers", type=int, default=1)
+    op.add_option("-w", "--workers", type=int, default=4)
     op.add_option("-r", "--root_dir", type=str, default=str(Path(__file__).parent))
     (opts, args) = op.parse_args()
     logging.basicConfig(filename=opts.log, level=logging.INFO,
