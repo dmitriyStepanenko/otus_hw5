@@ -24,7 +24,7 @@ class Server:
             protocol=DEFAULT_HTTP_PROTOCOL,
             autorun=True
     ):
-        self.sel = selectors.DefaultSelector()
+        self.sel = selectors.PollSelector()
         self.host = host
         self.port = port
 
@@ -69,40 +69,45 @@ class Server:
         logging.info(f"accepted connection from {addr}")
         conn.setblocking(False)
         data = types.SimpleNamespace(addr=addr, inb=b"", outb=b"", resp=None)
-        events = selectors.EVENT_READ | selectors.EVENT_WRITE
+        events = selectors.EVENT_READ
         self.sel.register(conn, events, data=data)
 
     def service_connection(self, socket_with_data, mask):
         sock: socket.socket = socket_with_data.fileobj
         data = socket_with_data.data
         if mask & selectors.EVENT_READ:
-            while True:
-                recv_data = self.recv(sock, 1024)
-                logging.info(f"get {recv_data}")
-                if not recv_data:
-                    logging.info(f"closing connection to {data.addr}")
-                    self.sel.unregister(sock)
-                    sock.close()
-                    return
+            recv_data = self.recv(sock, 1024)
+            logging.info(f"get {recv_data}")
+            if not recv_data:
+                logging.info(f"closing connection to {data.addr}")
+                self.sel.unregister(sock)
+                sock.close()
+                return
 
-                data.inb += recv_data
-                if recv_data.decode('utf-8').replace('\r\n', '\n').find('\n\n') != -1:
-                    logging.info('find end of headers')
-                    break
-            resp = Response(
-                protocol=self.protocol,
-                server_name=self.server_name,
-                allowed_methods=self.allowed_methods,
-                allowed_http_protocols=self.allowed_http_protocols,
-                root_dir=self.root_dir
-            )
-            self.thread_pool.submit(resp.form_response_no_return, socket_with_data.data)
+            data.inb += recv_data
+            if data.inb.decode('utf-8').replace('\r\n', '\n').find('\n\n') != -1:
+                logging.info('find end of headers')
+                resp = Response(
+                    protocol=self.protocol,
+                    server_name=self.server_name,
+                    allowed_methods=self.allowed_methods,
+                    allowed_http_protocols=self.allowed_http_protocols,
+                    root_dir=self.root_dir
+                )
+                self.sel.modify(sock, selectors.EVENT_WRITE, data)
+                self.thread_pool.submit(resp.form_response_no_return, data)
 
         if mask & selectors.EVENT_WRITE:
-            if data.resp:
-                logging.info(f"try send {data.resp} to {data.addr}")
-                self.sendall(sock, data.resp)
+            if not data.resp:
+                return
 
+            logging.info(f"try send {data.resp} to {data.addr}")
+            n = self.send(sock, data.resp)
+            logging.info(f"send {n} from {len(data.resp)} bytes ")
+
+            if n < len(data.resp):
+                data.resp = data.resp[n:]
+            else:
                 self.sel.unregister(sock)
                 sock.close()
 
@@ -114,9 +119,9 @@ class Server:
             self.sel.unregister(sock)
             sock.close()
 
-    def sendall(self, sock, data):
+    def send(self, sock, data):
         try:
-            return sock.sendall(data)
+            return sock.send(data)
         except ConnectionResetError:
             logging.info('Connection reset by peer')
             self.sel.unregister(sock)
