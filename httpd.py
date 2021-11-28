@@ -43,9 +43,9 @@ class Server:
         host = self.host if host is None else host
         port = self.port if port is None else port
         lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 10)
         lsock.bind((host, port))
-        lsock.listen(5)
+        lsock.listen(100)
         logging.info(f"listening on {host} {port}")
         lsock.setblocking(False)
         self.sel.register(lsock, selectors.EVENT_READ, data=None)
@@ -53,12 +53,13 @@ class Server:
     def serve_forever(self):
         try:
             while True:
-                events = self.sel.select(timeout=None)
+                events = self.sel.select(timeout=1)
                 for socket_with_data, mask in events:
                     if socket_with_data.data is None:
                         self.accept_wrapper(socket_with_data.fileobj)
                     else:
                         self.service_connection(socket_with_data, mask)
+
         except KeyboardInterrupt:
             logging.info("caught keyboard interrupt, exiting")
         finally:
